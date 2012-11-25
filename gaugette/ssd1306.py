@@ -241,8 +241,61 @@ class SSD1306(adafruitgfx.AdafruitGFX):
             self.buffer[offset] &= (0xFF - bit_mask)
  
 
+    # overwritten from adafruitgfx
+    def draw_fast_vline(self, x, y, h, color=1):
+        if (x<0 or x>=self.buffer_cols or y<0 or y+h>self.buffer_rows):
+            return
+        if (h<8):
+            self.draw_line(x, y, x, y+h-1, color)
+            return
+
+        mem_row_start = y / 8
+        mem_row_end = (y+h) / 8
+        x *= self.buffer_rows/8
+        
+        # line start
+        bit_mask = (0xff << (y % 8)) & 0xff
+        offset = mem_row_start + x
+
+        if color:
+            self.buffer[offset] |= bit_mask
+        else:
+            self.buffer[offset] &= (0xFF - bit_mask)
+
+        # line end
+        b = 8 - (y+h) % 8
+        bit_mask = 0xff >> (8 - (y+h) % 8)
+        offset = mem_row_end + x
+
+        if color:
+            self.buffer[offset] |= bit_mask
+        else:
+            self.buffer[offset] &= (0xFF - bit_mask)
+        
+        # line middle
+        for y in range(mem_row_start+1, mem_row_end):
+            offset = y + x
+            if color:
+                self.buffer[offset] = 0xFF
+            else:
+                self.buffer[offset] = 0
+
+
+    # overwritten from adafruitgfx
+    def draw_fast_hline(self, x, y, w, color=1):
+        # stupidest version - update in subclasses if desired!
+        if (x<0 or x+w>self.buffer_cols or y<0 or y>=self.buffer_rows):
+            return
+        mem_row = y / 8
+        bit_mask = 1 << (y % 8)
+
+        for offset in range(mem_row + self.buffer_rows/8 * x, mem_row + self.buffer_rows/8 * (x+w), self.buffer_rows/8):            
+            if color:
+                self.buffer[offset] |= bit_mask
+            else:
+                self.buffer[offset] &= (0xFF - bit_mask)
+            
+
+    # use fillrect instead
     def clear_block(self, x0,y0,dx,dy):
-        for x in range(x0,x0+dx):
-            for y in range(y0,y0+dy):
-                self.draw_pixel(x,y,0)
- 
+        fill_rect(x0,y0,dx,dy,0)
