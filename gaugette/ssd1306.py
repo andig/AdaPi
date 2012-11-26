@@ -243,9 +243,11 @@ class SSD1306(adafruitgfx.AdafruitGFX):
 
     # overwritten from adafruitgfx
     def draw_fast_vline(self, x, y, h, color=1):
-        if (x<0 or x>=self.buffer_cols or y<0 or y+h>self.buffer_rows):
+        if (x<0 or x>=self.buffer_cols or y<0 or y+h>self.buffer_rows or h<=0):
             return
-        if (h<8):
+        #print("x: %d y:%d h:%d mod:%d" % (x, y, h, (y % 8)+h))
+        # special intra-byte cases
+        if y > 0 and (y % 8) + h < 8:
             self.draw_line(x, y, x, y+h-1, color)
             return
 
@@ -253,27 +255,27 @@ class SSD1306(adafruitgfx.AdafruitGFX):
         mem_row_end = (y+h) / 8
         x *= self.buffer_rows/8
         
-        # line start
-        bit_mask = (0xff << (y % 8)) & 0xff
-        offset = mem_row_start + x
-
-        if color:
-            self.buffer[offset] |= bit_mask
-        else:
-            self.buffer[offset] &= (0xFF - bit_mask)
-
+        if (y % 8) != 0:
+            # line start
+            bit_mask = (0xff << (y % 8)) & 0xff
+            offset = mem_row_start + x
+            mem_row_start += 1
+            if color:
+                self.buffer[offset] |= bit_mask
+            else:
+                self.buffer[offset] &= (0xFF - bit_mask)
+        
         # line end
-        b = 8 - (y+h) % 8
-        bit_mask = 0xff >> (8 - (y+h) % 8)
-        offset = mem_row_end + x
-
-        if color:
-            self.buffer[offset] |= bit_mask
-        else:
-            self.buffer[offset] &= (0xFF - bit_mask)
+        if (y+h) % 8 != 0:
+            bit_mask = 0xff >> (8 - (y+h) % 8)
+            offset = mem_row_end + x
+            if color:
+                self.buffer[offset] |= bit_mask
+            else:
+                self.buffer[offset] &= (0xFF - bit_mask)
         
         # line middle
-        for y in range(mem_row_start+1, mem_row_end):
+        for y in range(mem_row_start, mem_row_end):
             offset = y + x
             if color:
                 self.buffer[offset] = 0xFF
