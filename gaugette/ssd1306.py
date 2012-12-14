@@ -52,7 +52,7 @@
 
 import spidev
 import wiringpi
-import Adafruit_I2C
+import adafruit.Adafruit_I2C as Adafruit_I2C
 
 import font5x8
 import adafruit.adafruitgfx as adafruitgfx
@@ -191,8 +191,6 @@ class SSD1306Physical(SSD1306Virtual):
     # Class constants are externally accessible as gaugette.ssd1306.SSD1306.CONST
     # or my_instance.CONST
 
-    # TODO - insert underscores to rationalize constant names
-
     EXTERNAL_VCC   = 0x1
     SWITCH_CAP_VCC = 0x2
         
@@ -245,7 +243,7 @@ class SSD1306Physical(SSD1306Virtual):
         self.gpio.delay(10) # 10ms
         self.gpio.digitalWrite(self.reset_pin, self.gpio.HIGH)
 
-    def command(self, *bytes):
+    def command(self, bytes):
         pass
 
     def data(self, bytes):
@@ -297,6 +295,36 @@ class SSD1306Physical(SSD1306Virtual):
         length = count * self.bytes_per_col
         self.data(self.buffer[start:start+length])
 
+    def startscrollright(self, start, stop):
+        # Activate a right handed scroll for rows start through stop
+        # Hint, the display is 16 rows tall. To scroll the whole display, run:
+        # display.scrollright(0x00, 0x0F)
+        self.command(self.RIGHT_HORIZ_SCROLL)
+        self.command(0x00)
+        self.command(start)
+        self.command(0x00)
+        self.command(stop)
+        self.command(0x01)
+        self.command(0xFF)
+        self.command(self.ACTIVATE_SCROLL)
+        
+    def startscrollleft(self, start, stop):
+        # Activate a right handed scroll for rows start through stop
+        # Hint, the display is 16 rows tall. To scroll the whole display, run:
+        # display.scrollright(0x00, 0x0F)
+        self.command(self.LEFT_HORIZ_SCROLL)
+        self.command(0x00)
+        self.command(start)
+        self.command(0x00)
+        self.command(stop)
+        self.command(0x01)
+        self.command(0xFF)
+        self.command(self.ACTIVATE_SCROLL)
+        
+    def stopscroll(self):
+        self.command(self.DEACTIVATE_SCROLL)
+
+
 class SSD1306_SPI(SSD1306Physical):
 
     # Device name will be /dev/spidev-{bus}.{device}
@@ -345,4 +373,6 @@ class SSD1306_I2C(SSD1306Physical):
         self.i2c.writeList(self.I2C_CONTROL, list(bytes))
     
     def data(self, bytes):
-        self.i2c.writeList(self.I2C_DATA, list(bytes))
+        # not more than 32 bytes at a time
+        for chunk in zip(*[iter(list(bytes))]*32):
+            self.i2c.writeList(self.I2C_DATA, list(chunk))
