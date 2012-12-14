@@ -2,7 +2,7 @@
 
 from distutils.core import setup
 
-setup(name='gaugette',
+setup(name='adapi',
       version='0.1',
       description='Python port of various libraries for use with the Raspberry Pi',
       author='Andreas Goetz',

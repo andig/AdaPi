@@ -2,6 +2,9 @@
 # ssd1306.py from https://github.com/guyc/py-gaugette
 # ported by Guy Carpenter, Clearwater Software
 #
+# Rebased to use the adafruit GFX library by Andreas Goetz
+#   https://github.com/andig/AdaPi
+#
 # This library is for the Adafruit 128x32 SPI monochrome OLED 
 # based on the SSD1306 driver.
 #   http://www.adafruit.com/products/661
@@ -47,15 +50,143 @@
 #      GND   -> GND
 #----------------------------------------------------------------------
 
-#import spidev
-#import wiringpi
-#import time
-#import sys
+import spidev
+import wiringpi
+import Adafruit_I2C
 
 import font5x8
 import adafruit.adafruitgfx as adafruitgfx
 
-class SSD1306(adafruitgfx.AdafruitGFX):
+#
+# text functions were moved to adafruitgfx
+#
+class SSD1306Virtual(adafruitgfx.AdafruitGFX):
+    def __init__(self, buffer_rows=64, buffer_cols=128):
+        self.cols = 128
+        self.rows = 32
+        self.font = font5x8.Font5x8
+        self.buffer_rows = buffer_rows
+        self.buffer_cols = buffer_cols
+        self.col_offset = 0
+        self.bytes_per_col = buffer_rows / 8
+        self.mem_bytes = self.rows * self.cols * 2 / 8 # total bytes in SSD1306 display ram
+        self.buffer = [0] * (self.buffer_cols * self.bytes_per_col)
+        
+        super(SSD1306Virtual, self).__init__(self.cols, self.rows)
+
+    def clear_display(self):
+        for i in range(0,len(self.buffer)):
+            self.buffer[i] = 0
+
+    # Diagnostic print of the memory buffer to stdout
+    def dump_buffer(self):
+        for y in range(0, self.buffer_rows):
+            mem_row = y/8
+            bit_mask = 1 << (y % 8)
+            line = ""
+            for x in range(0, self.buffer_cols):
+                mem_col = x
+                offset = mem_row + self.buffer_rows/8 * mem_col
+                if self.buffer[offset] & bit_mask:
+                    line += '*'
+                else:
+                    line += ' '
+            print('|'+line+'|')
+            
+    # Pixels are stored in column-major order!
+    # This makes it easy to reference a vertical slice of the display buffer
+    # and we use the to achieve reasonable performance vertical scrolling 
+    # without hardware support.
+    # 
+    #  If the self.buffer_rows = 64, then the bytes are arranged on
+    #  the screen like this:
+    #
+    #  0  8 ...
+    #  1  9
+    #  2 10
+    #  3 11
+    #  4 12
+    #  5 13
+    #  6 14
+    #  7 15
+    #
+    
+    def draw_pixel(self, x, y, color=1):
+        if (x<0 or x>=self.buffer_cols or y<0 or y>=self.buffer_rows):
+            return
+        mem_col = x
+        mem_row = y / 8
+        bit_mask = 1 << (y % 8)
+        offset = mem_row + self.buffer_rows/8 * mem_col
+        self.draw_fast_helper(offset, bit_mask, color)
+
+ 
+    # helper function for switching bits on/off
+    def draw_fast_helper(self, offset, bit_mask, color=1):
+        if color:
+            self.buffer[offset] |= bit_mask
+        else:
+            self.buffer[offset] &= (0xFF - bit_mask)
+        return
+    
+    
+    # overwritten from adafruitgfx
+    def draw_fast_vline(self, x, y, h, color=1):
+        if (x<0 or x>=self.buffer_cols or y<0 or y+h>self.buffer_rows or h<=0):
+            return
+        #print("x: %d y:%d h:%d mod:%d" % (x, y, h, (y % 8)+h))
+
+        mem_row_start = y / 8
+        mem_row_end = (y+h) / 8
+        x *= self.buffer_rows/8
+        # line start settings
+        offset = mem_row_start + x
+        bit_mask = (0xff << (y % 8)) & 0xff
+        
+        # special intra-byte cases
+        mini_line = 8 - (y % 8) - h
+        if mini_line > 0:
+            bit_mask = ((bit_mask << mini_line) & 0xFF) >> mini_line
+            self.draw_fast_helper(offset, bit_mask, color)
+            return
+        
+        # line start
+        if (y % 8) != 0:
+            self.draw_fast_helper(offset, bit_mask, color)
+            mem_row_start += 1
+        
+        # line end
+        if (y+h) % 8 != 0:
+            bit_mask = 0xff >> (8 - (y+h) % 8)
+            offset = mem_row_end + x
+            self.draw_fast_helper(offset, bit_mask, color)
+        
+        # line middle
+        for y in range(mem_row_start, mem_row_end):
+            offset = y + x
+            if color:
+                self.buffer[offset] = 0xFF
+            else:
+                self.buffer[offset] = 0
+
+
+    # overwritten from adafruitgfx
+    def draw_fast_hline(self, x, y, w, color=1):
+        if (x<0 or x+w>self.buffer_cols or y<0 or y>=self.buffer_rows):
+            return
+        mem_row = y / 8
+        bit_mask = 1 << (y % 8)
+
+        for offset in range(mem_row + self.buffer_rows/8 * x, mem_row + self.buffer_rows/8 * (x+w), self.buffer_rows/8):            
+            self.draw_fast_helper(offset, bit_mask, color)
+            
+
+    # use fillrect instead
+    def clear_block(self, x0,y0,dx,dy):
+        fill_rect(x0,y0,dx,dy,0)
+
+
+class SSD1306Physical(SSD1306Virtual):
 
     # Class constants are externally accessible as gaugette.ssd1306.SSD1306.CONST
     # or my_instance.CONST
@@ -100,79 +231,52 @@ class SSD1306(adafruitgfx.AdafruitGFX):
     MEMORY_MODE_VERT  = 0x01
     MEMORY_MODE_PAGE  = 0x02
 
-    # Device name will be /dev/spidev-{bus}.{device}
-    # dc_pin is the data/commmand pin.  This line is HIGH for data, LOW for command.
-    # We will keep d/c low and bump it high only for commands with data
-    # reset is normally HIGH, and pulled LOW to reset the display
+    # Reset is normally HIGH, and pulled LOW to reset the display.
 
-    def __init__(self, bus=0, device=0, dc_pin=1, reset_pin=2, buffer_rows=64, buffer_cols=128):
-        self.cols = 128
-        self.rows = 32
-        self.dc_pin = dc_pin
+    def __init__(self, bus=0, device=0, reset_pin=2, buffer_rows=64, buffer_cols=128):
         self.reset_pin = reset_pin
-#        self.spi = spidev.SpiDev()
-#        self.spi.open(bus, device)
-#        self.spi.max_speed_hz = 500000
-#        self.gpio = wiringpi.GPIO(wiringpi.GPIO.WPI_MODE_PINS)
-#        self.gpio.pinMode(self.reset_pin, self.gpio.OUTPUT)
-#        self.gpio.digitalWrite(self.reset_pin, self.gpio.HIGH)
-#        self.gpio.pinMode(self.dc_pin, self.gpio.OUTPUT)
-#        self.gpio.digitalWrite(self.dc_pin, self.gpio.LOW)
-        self.font = font5x8.Font5x8
-        self.buffer_rows = buffer_rows
-        self.buffer_cols = buffer_cols
-        self.col_offset = 0
-        self.bytes_per_col = buffer_rows / 8
-        self.mem_bytes = self.rows * self.cols * 2 / 8 # total bytes in SSD1306 display ram
-        self.buffer = [0] * (self.buffer_cols * self.bytes_per_col)
-        
-        super(SSD1306, self).__init__(self.cols, self.rows)
+        self.gpio = wiringpi.GPIO(wiringpi.GPIO.WPI_MODE_PINS)
+        self.gpio.pinMode(self.reset_pin, self.gpio.OUTPUT)
+        self.gpio.digitalWrite(self.reset_pin, self.gpio.HIGH)
+        super(SSD1306Physical, self).__init__(buffer_rows, buffer_cols)
 
-#    def reset(self):
-#        self.gpio.digitalWrite(self.reset_pin, self.gpio.LOW)
-#        self.gpio.delay(10) # 10ms
-#        self.gpio.digitalWrite(self.reset_pin, self.gpio.HIGH)
-#
-#    def command(self, *bytes):
-#        # already low
-#        # self.gpio.digitalWrite(self.dc_pin, self.gpio.LOW) 
-#        self.spi.writebytes(list(bytes))
-#
-#    def data(self, bytes):
-#        self.gpio.digitalWrite(self.dc_pin, self.gpio.HIGH)
-#        self.spi.writebytes(bytes)
-#        self.gpio.digitalWrite(self.dc_pin, self.gpio.LOW)
-#        
-#    def begin(self, vcc_state = SWITCH_CAP_VCC):
-#        self.gpio.delay(1) # 1ms
-#        self.reset()
-#        self.command(self.DISPLAY_OFF)
-#        self.command(self.SET_DISPLAY_CLOCK_DIV, 0x80)
-#        self.command(self.SET_MULTIPLEX, 0x1F)
-#        self.command(self.SET_DISPLAY_OFFSET, 0x00)
-#        self.command(self.SET_START_LINE | 0x00)
-#        if (vcc_state == self.EXTERNAL_VCC):
-#            self.command(self.CHARGE_PUMP, 0x10)
-#        else:
-#            self.command(self.CHARGE_PUMP, 0x14)
-#        self.command(self.SET_MEMORY_MODE, 0x00)
-#        self.command(self.SEG_REMAP | 0x01)
-#        self.command(self.COM_SCAN_DEC)
-#        self.command(self.SET_COM_PINS, 0x02)
-#        self.command(self.SET_CONTRAST, 0x8f)
-#        if (vcc_state == self.EXTERNAL_VCC):
-#            self.command(self.SET_PRECHARGE, 0x22)
-#        else:
-#            self.command(self.SET_PRECHARGE, 0xF1)
-#        self.command(self.SET_VCOM_DETECT, 0x40)
-#        self.command(self.DISPLAY_ALL_ON_RESUME)
-#        self.command(self.NORMAL_DISPLAY)
-#        self.command(self.DISPLAY_ON)
-        
-    def clear_display(self):
-        for i in range(0,len(self.buffer)):
-            self.buffer[i] = 0
+    def reset(self):
+        self.gpio.digitalWrite(self.reset_pin, self.gpio.LOW)
+        self.gpio.delay(10) # 10ms
+        self.gpio.digitalWrite(self.reset_pin, self.gpio.HIGH)
 
+    def command(self, *bytes):
+        pass
+
+    def data(self, bytes):
+        pass
+        
+    def begin(self, vcc_state = SWITCH_CAP_VCC):
+        self.gpio.delay(1) # 1ms
+        self.reset()
+        self.command(self.DISPLAY_OFF)
+        self.command(self.SET_DISPLAY_CLOCK_DIV, 0x80)
+        self.command(self.SET_MULTIPLEX, 0x1F)
+        self.command(self.SET_DISPLAY_OFFSET, 0x00)
+        self.command(self.SET_START_LINE | 0x00)
+        if (vcc_state == self.EXTERNAL_VCC):
+            self.command(self.CHARGE_PUMP, 0x10)
+        else:
+            self.command(self.CHARGE_PUMP, 0x14)
+        self.command(self.SET_MEMORY_MODE, 0x00)
+        self.command(self.SEG_REMAP | 0x01)
+        self.command(self.COM_SCAN_DEC)
+        self.command(self.SET_COM_PINS, 0x02)
+        self.command(self.SET_CONTRAST, 0x8f)
+        if (vcc_state == self.EXTERNAL_VCC):
+            self.command(self.SET_PRECHARGE, 0x22)
+        else:
+            self.command(self.SET_PRECHARGE, 0xF1)
+        self.command(self.SET_VCOM_DETECT, 0x40)
+        self.command(self.DISPLAY_ALL_ON_RESUME)
+        self.command(self.NORMAL_DISPLAY)
+        self.command(self.DISPLAY_ON)
+        
     def invert_display(self):
         self.command(self.INVERT_DISPLAY)
 
@@ -183,7 +287,7 @@ class SSD1306(adafruitgfx.AdafruitGFX):
         self.command(self.SET_MEMORY_MODE, self.MEMORY_MODE_VERT)
         self.command(self.SET_COL_ADDRESS, 0, 127)
         start = self.col_offset * self.bytes_per_col
-        length = self.mem_bytes # automatically trucated if few bytes available in self.buffer
+        length = self.mem_bytes # automatically truncated if few bytes available in self.buffer
         self.data(self.buffer[start:start+length])
 
     def display_cols(self, start_col, count):
@@ -193,112 +297,52 @@ class SSD1306(adafruitgfx.AdafruitGFX):
         length = count * self.bytes_per_col
         self.data(self.buffer[start:start+length])
 
+class SSD1306_SPI(SSD1306Physical):
 
-    # Diagnostic print of the memory buffer to stdout
-    def dump_buffer(self):
-        for y in range(0, self.buffer_rows):
-            mem_row = y/8
-            bit_mask = 1 << (y % 8)
-            line = ""
-            for x in range(0, self.buffer_cols):
-                mem_col = x
-                offset = mem_row + self.buffer_rows/8 * mem_col
-                if self.buffer[offset] & bit_mask:
-                    line += '*'
-                else:
-                    line += ' '
-            print('|'+line+'|')
-            
-    # Pixels are stored in column-major order!
-    # This makes it easy to reference a vertical slice of the display buffer
-    # and we use the to achieve reasonable performance vertical scrolling 
-    # without hardware support.
-    # 
-    #  If the self.buffer_rows = 64, then the bytes are arranged on
-    #  the screen like this:
-    #
-    #  0  8 ...
-    #  1  9
-    #  2 10
-    #  3 11
-    #  4 12
-    #  5 13
-    #  6 14
-    #  7 15
-    #
-    
-    def draw_pixel(self, x, y, on=True):
-        if (x<0 or x>=self.buffer_cols or y<0 or y>=self.buffer_rows):
-            return
-        mem_col = x
-        mem_row = y / 8
-        bit_mask = 1 << (y % 8)
-        offset = mem_row + self.buffer_rows/8 * mem_col
-        self.draw_fast_helper(offset, bit_mask, on)
+    # Device name will be /dev/spidev-{bus}.{device}
+    # dc_pin is the data/commmand pin.  This line is HIGH for data, LOW for command.
+    # We will keep d/c low and bump it high only for commands with data.
 
- 
-    # helper function for switching bits on/off
-    def draw_fast_helper(self, offset, bit_mask, color):
-        if color:
-            self.buffer[offset] |= bit_mask
-        else:
-            self.buffer[offset] &= (0xFF - bit_mask)
-        return
-    
-    
-    # overwritten from adafruitgfx
-    def draw_fast_vline(self, x, y, h, color=1):
-        if (x<0 or x>=self.buffer_cols or y<0 or y+h>self.buffer_rows or h<=0):
-            return
-        #print("x: %d y:%d h:%d mod:%d" % (x, y, h, (y % 8)+h))
+    def __init__(self, bus=0, device=0, dc_pin=1, reset_pin=2, buffer_rows=64, buffer_cols=128):
+        self.dc_pin = dc_pin
+        self.spi = spidev.SpiDev()
+        self.spi.open(bus, device)
+        self.spi.max_speed_hz = 500000
+        self.gpio.pinMode(self.dc_pin, self.gpio.OUTPUT)
+        self.gpio.digitalWrite(self.dc_pin, self.gpio.LOW)
+        super(SSD1306_SPI, self).__init__(bus, device, reset_pin, buffer_rows, buffer_cols)
 
-        mem_row_start = y / 8
-        mem_row_end = (y+h) / 8
-        x *= self.buffer_rows/8
-        # initial offset
-        offset = mem_row_start + x
+    def reset(self):
+        self.gpio.digitalWrite(self.reset_pin, self.gpio.LOW)
+        self.gpio.delay(10) # 10ms
+        self.gpio.digitalWrite(self.reset_pin, self.gpio.HIGH)
+
+    def command(self, *bytes):
+        # already low
+        # self.gpio.digitalWrite(self.dc_pin, self.gpio.LOW) 
+        self.spi.writebytes(list(bytes))
+
+    def data(self, bytes):
+        self.gpio.digitalWrite(self.dc_pin, self.gpio.HIGH)
+        self.spi.writebytes(bytes)
+        self.gpio.digitalWrite(self.dc_pin, self.gpio.LOW)
         
-        # special intra-byte cases
-        mini_line = 8 - (y % 8) - h
-        if mini_line > 0:
-            bit_mask = (0xff << (y % 8)) & 0xff
-            bit_mask = ((bit_mask << mini_line) & 0xFF) >> mini_line
-            self.draw_fast_helper(offset, bit_mask, color)
-            return
-         
-        # line start
-        if (y % 8) != 0:
-            bit_mask = (0xff << (y % 8)) & 0xff
-            mem_row_start += 1
-            self.draw_fast_helper(offset, bit_mask, color)
-        
-        # line end
-        if (y+h) % 8 != 0:
-            bit_mask = 0xff >> (8 - (y+h) % 8)
-            offset = mem_row_end + x
-            self.draw_fast_helper(offset, bit_mask, color)
-        
-        # line middle
-        for y in range(mem_row_start, mem_row_end):
-            offset = y + x
-            if color:
-                self.buffer[offset] = 0xFF
-            else:
-                self.buffer[offset] = 0
+class SSD1306_I2C(SSD1306Physical):
 
+    # Device name will be /dev/i2c-{bus}.{device}
+    # Reset is normally HIGH, and pulled LOW to reset the display.
 
-    # overwritten from adafruitgfx
-    def draw_fast_hline(self, x, y, w, color=1):
-        # stupidest version - update in subclasses if desired!
-        if (x<0 or x+w>self.buffer_cols or y<0 or y>=self.buffer_rows):
-            return
-        mem_row = y / 8
-        bit_mask = 1 << (y % 8)
+    I2C_CONTROL = 0x00
+    I2C_DATA    = 0x40
+    
+    def __init__(self, bus=0, device=0, reset_pin=2, buffer_rows=64, buffer_cols=128):
+        self.i2c = Adafruit_I2C.Adafruit_I2C(device)
+        super(SSD1306_I2C, self).__init__(bus, device, reset_pin, buffer_rows, buffer_cols)
 
-        for offset in range(mem_row + self.buffer_rows/8 * x, mem_row + self.buffer_rows/8 * (x+w), self.buffer_rows/8):            
-            self.draw_fast_helper(offset, bit_mask, color)
-            
-
-    # use fillrect instead
-    def clear_block(self, x0,y0,dx,dy):
-        fill_rect(x0,y0,dx,dy,0)
+    def command(self, *bytes):
+        # already low
+        # self.gpio.digitalWrite(self.dc_pin, self.gpio.LOW) 
+        self.i2c.writeList(self.I2C_CONTROL, list(bytes))
+    
+    def data(self, bytes):
+        self.i2c.writeList(self.I2C_DATA, list(bytes))

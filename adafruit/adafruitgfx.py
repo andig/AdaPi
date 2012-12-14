@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
-# adafruitgfx.py from https://github.com/andig/AdaPi
-# ported by Andreas Goetz, http://www.cpuidle.de
+# adafruitgfx.py ported by Andreas Goetz, http://www.cpuidle.de
+#   https://github.com/andig/AdaPi
 #
 # This library is a pure-python port of the Adafruit GFX C library:
 #
@@ -56,13 +56,13 @@ class AdafruitGFX(object):
 
         while (x<y):
             if (f >= 0):
-                y-=1
+                y     -=1
                 ddF_y += 2
-                f += ddF_y
+                f     += ddF_y
 
-            x+=1
+            x     +=1
             ddF_x += 2
-            f += ddF_x
+            f     += ddF_x
 
             self.draw_pixel(x0 + x, y0 + y, color)
             self.draw_pixel(x0 - x, y0 + y, color)
@@ -83,13 +83,13 @@ class AdafruitGFX(object):
 
         while (x<y):
             if (f >= 0):
-                y-=1
+                y     -=1
                 ddF_y += 2
                 f     += ddF_y
 
-            x +=1
+            x     +=1
             ddF_x += 2
-            f += ddF_x
+            f     += ddF_x
 
             if (cornername & 0x4):
                 self.draw_pixel(x0 + x, y0 + y, color)
@@ -341,8 +341,8 @@ class AdafruitGFX(object):
 #    def draw_char(self, x, y, unsigned char c, color, ubg, size):
 #        if ((x >= self._width)            || # Clip right
 #            (y >= self._height)           || # Clip bottom
-#            ((x + 5 * size - 1) < 0) || # Clip left
-#            ((y + 8 * size - 1) < 0)):     # Clip top
+#            ((x + 5 * size - 1) < 0)      || # Clip left
+#            ((y + 8 * size - 1) < 0)):       # Clip top
 #            return
 #
 #        for (i=0; i<6; i+=1)
@@ -393,14 +393,11 @@ class AdafruitGFX(object):
 
 
     def set_rotation(self, x):
-        x %= 4;    # cant be higher than 3
-        self.rotation = x
-        if x in [0,2]:
-            self._width = WIDTH
-            self._height = HEIGHT
+        self.rotation = x % 4;    # cant be higher than 3
+        if self.rotation % 2 == 0:
+            self._width, self._height = WIDTH, HEIGHT
         else:
-            self._width = HEIGHT
-            self._height = WIDTH
+            self._width, self._height = HEIGHT, WIDTH
 
 
     def invert_display(self, i):
@@ -430,8 +427,8 @@ class AdafruitGFX(object):
             p = ord(c) * font_cols
             for col in range(0,font_cols):
                 mask = font_bytes[p]
-                p+=1
-                py = y
+                p   += 1
+                py   = y
                 for row in range(0,8):
                     for sy in range(0,size):
                         px = x
