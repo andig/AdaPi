@@ -9,5 +9,5 @@ setup(name='adapi',
       author_email='cpudile@gmx.de',
       url='http://github.com/andig/AdaPi/',
       long_description=open('README.md').read(),
-      packages=['adafruit', 'gaugette'],
+      packages=['adafruit', 'gaugette', 'fonts'],
 )
