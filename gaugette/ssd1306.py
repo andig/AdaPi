@@ -243,7 +243,7 @@ class SSD1306Physical(SSD1306Virtual):
         self.gpio.delay(10) # 10ms
         self.gpio.digitalWrite(self.reset_pin, self.gpio.HIGH)
 
-    def command(self, bytes):
+    def command(self, *bytes):
         pass
 
     def data(self, bytes):
@@ -340,11 +340,6 @@ class SSD1306_SPI(SSD1306Physical):
         self.gpio.digitalWrite(self.dc_pin, self.gpio.LOW)
         super(SSD1306_SPI, self).__init__(bus, device, reset_pin, buffer_rows, buffer_cols)
 
-    def reset(self):
-        self.gpio.digitalWrite(self.reset_pin, self.gpio.LOW)
-        self.gpio.delay(10) # 10ms
-        self.gpio.digitalWrite(self.reset_pin, self.gpio.HIGH)
-
     def command(self, *bytes):
         # already low
         # self.gpio.digitalWrite(self.dc_pin, self.gpio.LOW) 
@@ -358,10 +353,12 @@ class SSD1306_SPI(SSD1306Physical):
 class SSD1306_I2C(SSD1306Physical):
 
     # Device name will be /dev/i2c-{bus}.{device}
-    # Reset is normally HIGH, and pulled LOW to reset the display.
-
+    # bus number is being ignored as Adafruit_I2C auto-detects correct bus
+    
     I2C_CONTROL = 0x00
     I2C_DATA    = 0x40
+    
+    I2C_BLOCKSIZE = 32
     
     def __init__(self, bus=0, device=0, reset_pin=2, buffer_rows=64, buffer_cols=128):
         self.i2c = Adafruit_I2C.Adafruit_I2C(device)
@@ -374,5 +371,7 @@ class SSD1306_I2C(SSD1306Physical):
     
     def data(self, bytes):
         # not more than 32 bytes at a time
-        for chunk in zip(*[iter(list(bytes))]*32):
+        for chunk in zip(*[iter(list(bytes))]*self.I2C_BLOCKSIZE):
             self.i2c.writeList(self.I2C_DATA, list(chunk))
+        # remaining bytes
+        self.i2c.writeList(self.I2C_DATA, bytes[len(bytes)-len(bytes) % self.I2C_BLOCKSIZE:])
