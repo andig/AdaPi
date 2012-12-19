@@ -230,7 +230,9 @@ class i2c_device:
         return self.bus.read_i2c_block_data(self.addr, data, n)
 
 
-class Adafruit_CharLCD_I2C(Adafruit_CharLCD_Virtual):
+class Adafruit_CharLCD_I2C_PCF8574(Adafruit_CharLCD_Virtual):
+    """ Assumes PCF8574 port expander """
+    """ data pins must be connected to P0..P3 of the port expander """
 
     def __init__(self, bus=1, device=0x20, bit_rs=4, bit_e=6):
         self.i2c = i2c_device(device, bus)
