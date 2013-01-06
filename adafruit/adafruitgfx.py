@@ -143,6 +143,12 @@ class AdafruitGFX(object):
     def draw_pixel(self, x, y, color):
         pass
 
+   
+    # to be overwritten
+    def get_pixel(self, x, y):
+        pass
+
+
     # bresenham's algorithm - thx wikpedia
     def draw_line(self, x0, y0, x1, y1, color):
         steep = abs(y1 - y0) > abs(x1 - x0)
@@ -313,6 +319,12 @@ class AdafruitGFX(object):
             y+=1
         
 
+
+    def invert_rect(self, x, y, w, h):
+        for i in range(x, x+w):
+            for j in range(y, y+h):
+                self.draw_pixel(i, j, self.get_pixel(i, j) ^ 1)
+
 #    def drawBitmap(self, x, y, const *bitmap, w, h, color):
 #        i, j, byteWidth = (w + 7) / 8
 #        #for(j=0; j<h; j+=1)
@@ -442,21 +454,21 @@ class AdafruitGFX(object):
         return x
 
     # proportional text using fonts module
-    def draw_text3(self, x, y, string, font):
+    def draw_text3(self, x, y, string, font, kerning=0):
         height = font.char_height
         prev_char = None
 
         for c in string:
             if (c<font.start_char or c>font.end_char):
                 if prev_char != None:
-                    x += font.space_width + prev_width + font.gap_width
+                    x += font.space_width + prev_width + font.gap_width + kerning
                 prev_char = None
             else:
                 pos = ord(c) - ord(font.start_char)
                 (width,offset) = font.descriptors[pos]
 
                 if prev_char != None:
-                    x += font.kerning[prev_char][pos] + font.gap_width
+                    x += font.kerning[prev_char][pos] + font.gap_width + kerning
                     
                 prev_char = pos
                 prev_width = width
@@ -479,3 +491,31 @@ class AdafruitGFX(object):
         if prev_char != None:
             x += prev_width
         return x
+    
+    def text_width(self, string, font=None, kerning=0):
+        if font == None:
+            font_cols = self.font.cols
+            l = len(string)
+            return(l * font_cols + (l-1) * (1+kerning))
+        else:
+            x = 0
+            prev_char = None
+            
+            for c in string:
+                if (c<font.start_char or c>font.end_char):
+                    if prev_char != None:
+                        x += font.space_width + prev_width + font.gap_width + kerning
+                    prev_char = None
+                else:
+                    pos = ord(c) - ord(font.start_char)
+                    (width,offset) = font.descriptors[pos]
+            
+                    if prev_char != None:
+                        x += font.kerning[prev_char][pos] + font.gap_width + kerning
+                        
+                    prev_char = pos
+                    prev_width = width
+              
+            if prev_char != None:
+                x += prev_width
+            return x
